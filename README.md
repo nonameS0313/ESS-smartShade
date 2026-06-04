@@ -1,5 +1,7 @@
 # ESS Smart Shade
 
+건국대학교 ESS 수업 Smart Shade 프로젝트
+
 스마트 창문 셰이드: **Pi1**에서 조도·PIR 수집 후 MQTT로 발행하고, **Pi2**에서 구독해 스테퍼 모터·시스템 상태(초음파/스위치/ALERT)를 제어합니다.
 
 - 저장소: https://github.com/nonameS0313/ESS-smartShade.git
