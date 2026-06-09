@@ -28,7 +28,7 @@ MODULE_DESCRIPTION("Dual stepper motor char device driver");
 #define STEPS          8
 #define ONEROUND       512
 #define FULLDEGREE     360
-#define STEP_DELAY_US  3000
+#define STEP_DELAY_US  1000
 #define MAX_STEPPER_DEG 90
 #define STEPPER_COUNT  2
 
