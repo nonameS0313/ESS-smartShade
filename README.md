@@ -28,11 +28,13 @@
 아래의 순서대로 폴더마다 make 실시
 
 1. Makefile 내의 \M 문자 지우는 명령어
+```
 sed -i 's/\r$//' Makefile
-
+```
 2. Make 명령어
+```
 make ARCH=arm
-
+```
 
 
 ## MQTT 메시지
