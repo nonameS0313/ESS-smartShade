@@ -1,6 +1,6 @@
 obj-m:= ultra_switch.o
 
-KDIR:=~/linux-rpi
+KDIR:= /lib/modules/$(shell uname -r)/build
 ARM:= ARCH=arm CROSS_COMPILE=/usr/bin/arm-linux-gnueabi-
 PWD:= $(shell pwd)
 
