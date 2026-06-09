@@ -24,6 +24,17 @@
 
 기본 IP는 코드에 **`10.10.10.12`(Pi2)** 로 고정되어 있습니다. 실제 네트워크에 맞게 `collector.c`, `smartshade_mqtt.c`의 `MQTT_HOST`를 수정하세요.
 
+## Make 명령어
+아래의 순서대로 폴더마다 make 실시
+
+1. Makefile 내의 \M 문자 지우는 명령어
+sed -i 's/\r$//' Makefile
+
+2. Make 명령어
+make ARCH=arm
+
+
+
 ## MQTT 메시지
 
 - **토픽:** `smartshade/sensor/data`
