@@ -22,7 +22,7 @@
 | Pi1 | 센서 수집·발행 | `pi1_sensor/` |
 | Pi2 | 브로커·구독·모터·로컬 IO | `broker/`, `pi2_motor/`, `pi2_sensor/` |
 
-기본 IP는 코드에 **`10.10.10.12`(Pi2)** 로 고정되어 있습니다. 실제 네트워크에 맞게 `collector.c`, `smartshade_mqtt.c`의 `MQTT_HOST`를 수정하세요.
+기본 IP는 코드에 **`10.10.10.13`(Pi2)** 로 고정되어 있습니다. 실제 네트워크에 맞게 `collector.c`, `smartshade_mqtt.c`의 `MQTT_HOST`를 수정하세요.
 
 ## Make 명령어
 아래의 순서대로 폴더마다 make 실시
@@ -66,7 +66,7 @@ Pi2 동작 요약:
 ### 네트워크
 
 - Pi1, Pi2가 같은 LAN에 있고 Pi1 → Pi2 `1883` 접근 가능
-- Pi2 IP를 `10.10.10.12`로 쓸 경우: Pi2에 고정 IP 또는 hosts 등록
+- Pi2 IP를 `10.10.10.13`로 쓸 경우: Pi2에 고정 IP 또는 hosts 등록
 
 ### 패키지
 
@@ -192,7 +192,7 @@ sudo ./collector
 3. Pi2에서 구독 확인:
 
 ```bash
-mosquitto_sub -h 10.10.10.12 -t 'smartshade/sensor/data' -v
+mosquitto_sub -h 10.10.10.13 -t 'smartshade/sensor/data' -v
 ```
 
 4. 조도 변화 시 Pi2 로그에 `light_a=...` 및 stepper CW/CCW 메시지 확인
