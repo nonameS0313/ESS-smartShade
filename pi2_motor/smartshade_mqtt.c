@@ -12,7 +12,7 @@
 #include "stepper_ioctl.h"
 #include "io_common.h"
 
-#define MQTT_HOST             "10.10.10.12"
+#define MQTT_HOST             "10.10.10.13"
 #define MQTT_PORT             1883
 #define MQTT_TOPIC            "smartshade/sensor/data"
 #define MQTT_CLIENT_ID        "pi2_smartshade"
@@ -94,12 +94,18 @@ static int parse_payload(const char *payload, int *light_a, int *light_b, int *i
 	return -1;
 }
 
+static void set_system_state(int state)
+{
+	if(fd_sys < 0)
+		return;
+
+	if(ioctl(fd_sys, CMD_SET_SYSTEM_STATE, &state) < 0)
+		perror("[smartshade] CMD_SET_SYSTEM_STATE failed\n");
+}
+
 static void handle_sensor_data(const char *payload)
 {
 	int light_a = 0, light_b = 0, intruder = 0;
-
-	if (sys_state != STATE_NORMAL)
-		return;		//NORMAL이 아니라면 MQTT 무시
 
 	if (parse_payload(payload, &light_a, &light_b, &intruder) < 0) {
 		fprintf(stderr, "[smartshade] invalid payload: %s\n", payload);
@@ -107,7 +113,28 @@ static void handle_sensor_data(const char *payload)
 	}
 
 	printf("[smartshade] light_a=%d light_b=%d intruder=%d\n",
-	       light_a, light_b, intruder);
+	    light_a, light_b, intruder);
+
+	if(intruder == 1) {
+		printf("[smartshade] intruder detected -> STATE_ALERT\n");
+		set_system_state(STATE_ALERT);
+		return;
+	}
+
+	if(intruder == 1) {
+		printf("[smartshade] intruder detected -> STATE_ALERT\n");
+		set_system_state(STATE_ALERT);
+		return;
+	}
+
+	if (intruder == 0 && prev_sys_state == STATE_ALERT){
+		printf("[smartshade] intruder undetected -> STATE 복구\n");
+		set_system_state(STATE_NORMAL);
+		return;
+	}
+
+	if(sys_state != STATE_NORMAL)
+		return;
 
 	control_stepper_by_light(fd_a, light_a, "stepper_a");
 	control_stepper_by_light(fd_b, light_b, "stepper_b");

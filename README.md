@@ -209,22 +209,22 @@ mosquitto_sub -h 10.10.10.12 -t 'smartshade/sensor/data' -v
 
 ```bash
 # light_a 높음 → A축 CW 15°
-mosquitto_pub -h 10.10.10.12 -t smartshade/sensor/data \
+mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
   -m '{"light_a": 2800, "light_b": 1500, "intruder": 0}'
 
 # light_a 낮음 → A축 CCW 15°
-mosquitto_pub -h 10.10.10.12 -t smartshade/sensor/data \
+mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
   -m '{"light_a": 1000, "light_b": 1500, "intruder": 0}'
 
 # deadband — 회전 없음
-mosquitto_pub -h 10.10.10.12 -t smartshade/sensor/data \
+mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
   -m '{"light_a": 1800, "light_b": 1500, "intruder": 0}'
 ```
 
 **침입 — ALERT + ZERO (NORMAL에서 시작)**
 
 ```bash
-mosquitto_pub -h 10.10.10.12 -t smartshade/sensor/data \
+mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
   -m '{"light_a": 1800, "light_b": 1500, "intruder": 1}'
 ```
 
