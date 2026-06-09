@@ -40,9 +40,9 @@ static struct tasklet_struct ultra_tasklet; // 초음파 바텀 하프
 static dev_t dev_num;
 static struct cdev *cd_cdev;
 
-// 외부 LED 변경 함수 가져오기 (led_control.c에서 export 할 예정)
-// extern void update_led_status(int state);
-
+// -------------------------------------------------------------
+// [LED] 타이머, 핸들러
+// -------------------------------------------------------------
 // LED 변경 함수
 // 황색 점멸 제어용 타이머 및 플래그 추가
 struct led_blink_data {
@@ -56,7 +56,7 @@ static int blink_toggle = 0;
 static void led_blink_timer_handler(struct timer_list *t) {
     // timer 주소로 전체 구조체 찾기
     struct led_blink_data *data = from_timer(data, t, timer);
-
+    
     if(current_state == STATE_MANUAL || current_state == STATE_ALERT) {
         blink_toggle = !blink_toggle;
         gpio_set_value(data->gpio_pin, blink_toggle);
@@ -68,35 +68,48 @@ static void led_blink_timer_handler(struct timer_list *t) {
 static void update_led_status(int state) {
     // 작동 중이던 점멸 타이머를 안전하게 정지
     del_timer(&blink_dev.timer);
-
+    
     switch (state) {
         case STATE_NORMAL: // 전체 소등
-            gpio_set_value(GPIO_LED_YELLOW, 0);
-            gpio_set_value(GPIO_LED_RED,    0);
-            break;
+        gpio_set_value(GPIO_LED_YELLOW, 0);
+        gpio_set_value(GPIO_LED_RED,    0);
+        break;
         case STATE_MANUAL: // 황색 점멸
-            gpio_set_value(GPIO_LED_RED,    0);
-
-            blink_dev.gpio_pin = GPIO_LED_YELLOW;
-
-            blink_toggle = 1;
-            gpio_set_value(GPIO_LED_YELLOW, blink_toggle); // 일단 켬
-            mod_timer(&blink_dev.timer, jiffies + msecs_to_jiffies(500)); // 0.5초 뒤 점멸 시작
-            break;
+        gpio_set_value(GPIO_LED_RED,    0);
+        
+        blink_dev.gpio_pin = GPIO_LED_YELLOW;
+        
+        blink_toggle = 1;
+        gpio_set_value(GPIO_LED_YELLOW, blink_toggle); // 일단 켬
+        mod_timer(&blink_dev.timer, jiffies + msecs_to_jiffies(500)); // 0.5초 뒤 점멸 시작
+        break;
         case STATE_DISABLED:
-            gpio_set_value(GPIO_LED_RED,    0);
-            gpio_set_value(GPIO_LED_YELLOW, 1); // 켜짐 유지
-            break;
+        gpio_set_value(GPIO_LED_RED,    0);
+        gpio_set_value(GPIO_LED_YELLOW, 1); // 켜짐 유지
+        break;
         case STATE_ALERT: // 적색 점멸
-            gpio_set_value(GPIO_LED_RED,    0);
-
-            blink_dev.gpio_pin = GPIO_LED_RED;
-
-            blink_toggle = 1;
-            gpio_set_value(GPIO_LED_RED, blink_toggle); // 일단 켬
-            mod_timer(&blink_dev.timer, jiffies + msecs_to_jiffies(500)); // 0.5초 뒤 점멸 시작
-            break;
+        gpio_set_value(GPIO_LED_RED,    0);
+        
+        blink_dev.gpio_pin = GPIO_LED_RED;
+        
+        blink_toggle = 1;
+        gpio_set_value(GPIO_LED_RED, blink_toggle); // 일단 켬
+        mod_timer(&blink_dev.timer, jiffies + msecs_to_jiffies(500)); // 0.5초 뒤 점멸 시작
+        break;
     }
+}
+
+// 초음파 센서 주기적 자동 트리거용 타이머 추가
+static struct timer_list ultra_trig_timer;
+
+static void ultra_trig_timer_handler(struct timer_list *t) {
+    // 10us 동안 HIGH 신호를 주어 초음파 센서 구동
+    gpio_set_value(GPIO_TRIG, 1);
+    udelay(10);
+    gpio_set_value(GPIO_TRIG, 0);
+
+    // 100ms 뒤에 이 타이머 핸들러가 다시 실행되도록 예약 (무한 반복 루프)
+    mod_timer(&ultra_trig_timer, jiffies + msecs_to_jiffies(100));
 }
 
 // 통합 상태 변경 함수
@@ -183,15 +196,19 @@ static irqreturn_t switch_irq_handler(int irq, void *dev_id) {
 // -------------------------------------------------------------
 static ssize_t sys_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos) {
     // 상태 변화가 없으면 유저 스레드를 재움 (Blocking)
-    // wait_event_interruptible(state_wq, state_changed != 0);
-    
     unsigned long flags;
     int state;
+
+    if (wait_event_interruptible(state_wq, state_changed != 0)) {
+        return -ERESTARTSYS; 
+    }
 
     // softirq 컨텍스트와 deadlock 방지를 위해 spin_lock_irqsave 사용
     // copy_to_user는 lock 안에서 sleep하면 안 되므로 spinlock 밖에서 호출
     spin_lock_irqsave(&state_lock, flags);
-    state_changed = 0;
+    if (state_changed) {
+        state_changed = 0;
+    }
     state = current_state;
     spin_unlock_irqrestore(&state_lock, flags);
 
@@ -301,11 +318,16 @@ static int __init sys_io_init(void) {
     // 점멸 타이머 초기화
     timer_setup(&blink_dev.timer, led_blink_timer_handler, 0);
     
+    // [추가] 자동 트리거 타이머 초기화 및 최초 실행 시작
+    timer_setup(&ultra_trig_timer, ultra_trig_timer_handler, 0);
+    mod_timer(&ultra_trig_timer, jiffies + msecs_to_jiffies(100));
+
     printk(KERN_INFO "System IO Driver Registered.\n");
     return 0;
 
     // 에러 발생 시 정상적인 클린업 패스 구축
 err_free_irq_echo:
+    del_timer_sync(&ultra_trig_timer);
     free_irq(gpio_to_irq(GPIO_ECHO), NULL);
 err_free_led_yellow:
     gpio_free(GPIO_LED_YELLOW);
@@ -329,6 +351,7 @@ static void __exit sys_io_exit(void) {
     free_irq(gpio_to_irq(GPIO_SW), NULL);
     del_timer_sync(&sw_timer);
     del_timer_sync(&blink_dev.timer);
+    del_timer_sync(&ultra_trig_timer);
     tasklet_kill(&ultra_tasklet);
 
 

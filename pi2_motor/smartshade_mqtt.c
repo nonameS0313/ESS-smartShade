@@ -1,11 +1,9 @@
 /* Smart Shade - Pi2 stepper + ultrasonic + MQTT
  *
- * Native build:  make          (pi2_motor/)
- * Driver:        make -C driver
+ * Native build:  make -C app
  * Run:           sudo ./smartshade_mqtt
  */
 #include <stdio.h>
-#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -96,18 +94,12 @@ static int parse_payload(const char *payload, int *light_a, int *light_b, int *i
 	return -1;
 }
 
-static void set_system_state(int state)
-{
-	if (fd_sys < 0)
-		return;
-
-	if (ioctl(fd_sys, CMD_SET_SYSTEM_STATE, &state) < 0)
-		perror("[smartshade] CMD_SET_SYSTEM_STATE failed");
-}
-
 static void handle_sensor_data(const char *payload)
 {
 	int light_a = 0, light_b = 0, intruder = 0;
+
+	if (sys_state != STATE_NORMAL)
+		return;		//NORMAL이 아니라면 MQTT 무시
 
 	if (parse_payload(payload, &light_a, &light_b, &intruder) < 0) {
 		fprintf(stderr, "[smartshade] invalid payload: %s\n", payload);
@@ -117,32 +109,19 @@ static void handle_sensor_data(const char *payload)
 	printf("[smartshade] light_a=%d light_b=%d intruder=%d\n",
 	       light_a, light_b, intruder);
 
-	if (intruder == 1) {
-		printf("[smartshade] intruder detected → STATE_ALERT\n");
-		set_system_state(STATE_ALERT);
-		return;
-	}
-
-	if (sys_state != STATE_NORMAL)
-		return;
-
 	control_stepper_by_light(fd_a, light_a, "stepper_a");
 	control_stepper_by_light(fd_b, light_b, "stepper_b");
 }
 
 // Ultrasonic.c 사용
-static void poll_ultrasonic(void)
+static void wait_and_process_sys_event(void)
 {
 	int state;
 
 	if (fd_sys < 0)
 		return;
 
-	if (ioctl(fd_sys, CMD_ULTRA_TRIG) < 0)
-		perror("[smartshade] CMD_ULTRA_TRIG failed");
-
-	usleep(ULTRA_WAIT_US);
-
+	// 커널 드라이버가 깨워줄 때까지 이 read() 함수 내에서 유저 앱이 완전히 잠든다.
 	if (read(fd_sys, &state, sizeof(state)) < 0) {
 		perror("[smartshade] read sys_state failed");
 		return;
@@ -150,13 +129,39 @@ static void poll_ultrasonic(void)
 
 	sys_state = state;
 
-	if (prev_sys_state == STATE_NORMAL
-	    && (sys_state == STATE_MANUAL || sys_state == STATE_ALERT))
-		stepper_zero_all();	//MANUAL or ALERT 상태면 창문 닫기
+	// 상태 전이에 따른 모터 안전 제어 (DISABLED 상태까지 안전하게 포괄)
+	// 현재 상태가 '동작 불가'라면 모터를 강제로 정지하고 아무것도 하지 않음
+    if (sys_state == STATE_DISABLED) {
+        printf("[smartshade] DISABLED state. Stop every Motor\n");
+        // 필요한 경우 여기에 모터 전원을 차단하는 함수를 추가.
+        prev_sys_state = sys_state;
+        return; // 아래의 모터 제어 로직을 타지 않고 함수를 즉시 빠져나갑니다.
+    }
 
-	if ((prev_sys_state == STATE_MANUAL || prev_sys_state == STATE_ALERT)
-	    && sys_state == STATE_NORMAL)
-		stepper_restore_all();	//NORMAL로 돌아오면 다시 열기
+    // 평시(NORMAL)에서 비상/수동/동작불가 상태로 바뀌면 -> 창문 닫기(원점 정렬)
+    if (prev_sys_state == STATE_NORMAL && sys_state != STATE_NORMAL)
+        stepper_zero_all();
+
+		
+	// 비상/수동/동작불가 상태에서 다시 평시(NORMAL)로 돌아오면 -> 창문 다시 열기(기존 각도 복원)
+    if (prev_sys_state != STATE_NORMAL && sys_state == STATE_NORMAL)
+        stepper_restore_all();
+	
+	// 장애물(DISABLED)이 사라졌는데, 복귀한 상태가 여전히 평시가 아니라면(MANUAL 또는 ALERT)
+    // 닫히던 중이었던 것으로 간주하고 끝까지 마저 닫는다!
+    if (prev_sys_state == STATE_DISABLED && 
+       (sys_state == STATE_MANUAL || sys_state == STATE_ALERT)) {
+        // printf("[smartshade] 장애물 해제! 기존에 하던 닫기 동작(Zeroing)을 마저 완료합니다.\n");
+        stepper_zero_all();
+    }
+	
+	// if (prev_sys_state == STATE_NORMAL
+	//     && (sys_state == STATE_MANUAL || sys_state == STATE_ALERT))
+	// 	stepper_zero_all();	//MANUAL or ALERT 상태면 창문 닫기
+
+	// if ((prev_sys_state == STATE_MANUAL || prev_sys_state == STATE_ALERT)
+	//     && sys_state == STATE_NORMAL)
+	// 	stepper_restore_all();	//NORMAL로 돌아오면 다시 열기
 
 	prev_sys_state = sys_state;
 }
@@ -185,23 +190,13 @@ static void on_connect(struct mosquitto *mosq, void *obj, int rc)
 static void on_message(struct mosquitto *mosq, void *obj,
 		       const struct mosquitto_message *msg)
 {
-	char buf[128];
-	size_t len;
-
 	(void)mosq;
 	(void)obj;
 
-	if (!msg->payload || msg->payloadlen <= 0)
+	if (!msg->payload)
 		return;
 
-	len = (size_t)msg->payloadlen;
-	if (len >= sizeof(buf))
-		len = sizeof(buf) - 1;
-
-	memcpy(buf, msg->payload, len);
-	buf[len] = '\0';
-
-	handle_sensor_data(buf);
+	handle_sensor_data((const char *)msg->payload);
 }
 
 static int mqtt_connect(struct mosquitto *mosq)
@@ -283,7 +278,7 @@ int main(void)
 	}
 
 	while (1)
-		poll_ultrasonic();
+		wait_and_process_sys_event();
 
 	mosquitto_loop_stop(mosq, true);
 	ret = 0;
