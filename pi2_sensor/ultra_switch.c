@@ -240,6 +240,12 @@ static long sys_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
                 change_system_state(next_state);
             }
             break;
+        case CMD_RELEASE_ALERT:
+            // ALERT 상태 해제시 기존 모드로 복귀
+            if(current_state == STATE_ALERT) {
+                change_system_state(main_mode);
+            }
+            break;
         default:
             return -EINVAL;
     }
