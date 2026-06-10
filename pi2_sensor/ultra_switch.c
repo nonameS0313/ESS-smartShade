@@ -120,6 +120,23 @@ void change_system_state(int new_state) {
     // 변경하려는 새로운 상태가 비상이 아닌 기본 모드일 때만 main_mode 축을 업데이트 한다
     if (current_state != new_state) {
         if(new_state == STATE_NORMAL || new_state == STATE_MANUAL) {
+            switch(main_mode){
+                case STATE_ALERT:
+                    printk("[ultra_switch] State changed : ALERT");
+                    break;
+                case STATE_DISABLED:
+                    printk("[ultra_switch] State changed : DISABLED");
+                    break;
+                case STATE_MANUAL:
+                    printk("[ultra_switch] State changed : MANUAL");
+                    break;
+                case STATE_NORMAL:
+                    printk("[ultra_switch] State changed : NORMAL");
+                    break;
+                default:
+                    break;
+            }
+            
             main_mode = new_state;
         }
 
