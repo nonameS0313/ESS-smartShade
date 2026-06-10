@@ -121,15 +121,10 @@ static void handle_sensor_data(const char *payload)
 		return;
 	}
 
-	if(intruder == 1) {
-		printf("[smartshade] intruder detected -> STATE_ALERT\n");
-		set_system_state(STATE_ALERT);
-		return;
-	}
-
 	if (intruder == 0 && prev_sys_state == STATE_ALERT){
 		printf("[smartshade] intruder undetected -> STATE 복구\n");
-		set_system_state(STATE_NORMAL);
+		if(ioctl(fd_sys, CMD_RELEASE_ALERT, &state) < 0)
+			perror("[smartshade] CMD_RELEASSE_ALERT failed\n");
 		return;
 	}
 
