@@ -53,9 +53,11 @@ make ARCH=arm
 
 Pi2 동작 요약:
 
-- `intruder == 1` → `/dev/sys_state`에 `STATE_ALERT` 설정 → `poll_ultrasonic()`에서 NORMAL→ALERT 전이 시 스테퍼 **0도(ZERO)**
+- `intruder == 1` → `/dev/sys_state`에 `STATE_ALERT` 설정 → `wait_and_process_sys_event()`에서 NORMAL→ALERT 전이 시 스테퍼 **0도(ZERO)**
+- **마지막 유효 MQTT 수신 후 10초** 동안 publish 없음 → `STATE_ALERT` (통신 두절)
 - `sys_state == STATE_NORMAL`일 때만 조도 임계값으로 스테퍼 회전
 - `intruder == 1`인 메시지에서는 조도 기반 회전 **스킵**
+- `intruder == 0`이고 현재 `STATE_ALERT`이면 `CMD_RELEASE_ALERT`로 `main_mode` 복귀 (침입 해제·통신 재개)
 
 조도 임계값 (`smartshade_mqtt.c`): `TOP=2100`, `BOTTOM=1400`, 회전량 `15°`.
 
@@ -232,6 +234,19 @@ mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
 
 같은 메시지에 `light_a`가 극단값이어도 `intruder==1`이면 **조도 모터 제어는 하지 않음**.
 
+**통신 두절 — 10초 미수신 ALERT**
+
+```bash
+# 1회 publish 후 10초간 추가 publish 없음 → MQTT publish timeout -> STATE_ALERT
+mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
+  -m '{"light_a": 1800, "light_b": 1500, "intruder": 0}'
+# (10초 대기)
+
+# 복구: publish 재개 + intruder:0 → CMD_RELEASE_ALERT
+mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
+  -m '{"light_a": 1800, "light_b": 1500, "intruder": 0}'
+```
+
 ### C. Pi1 디바이스만 로컬 확인
 
 ```bash
@@ -293,7 +308,6 @@ cat /dev/pir_sensor     # 0 또는 1
 
 ## 알려진 제한 (참고)
 
-- `intruder==0`으로 ALERT 자동 해제는 미구현
 - `pi2_sensor/Makefile`의 `test_app` 타겟은 저장소에 소스 없음 — 모듈 빌드만 사용
 - 조도 커널 드라이버의 spidev 접근 방식은 최신 커널에서 빌드 이슈 가능
 - 스테퍼 드라이버 `backward()` 인덱스 등은 추후 수정 권장

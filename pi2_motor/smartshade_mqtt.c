@@ -4,8 +4,11 @@
  * Run:           sudo ./smartshade_mqtt
  */
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
+#include <pthread.h>
 #include <sys/ioctl.h>
 #include <mosquitto.h>
 
@@ -27,12 +30,16 @@
 #define DEV_STEPPER_B         "/dev/stepper_b"
 #define DEV_SYS_STATE         "/dev/sys_state"
 #define ULTRA_WAIT_US         60000
+#define MQTT_PUBLISH_TIMEOUT_SEC  10
 
 static int fd_a = -1;
 static int fd_b = -1;
 static int fd_sys = -1;
 static volatile int sys_state = STATE_NORMAL;
 static int prev_sys_state = STATE_NORMAL;
+static time_t last_mqtt_msg_time = 0;
+static int timeout_alert_active = 0;
+static pthread_mutex_t mqtt_time_lock = PTHREAD_MUTEX_INITIALIZER;
 
 //stepper_motor.c 사용
 static int stepper_move(int fd, int degree, int direction)
@@ -96,11 +103,54 @@ static int parse_payload(const char *payload, int *light_a, int *light_b, int *i
 
 static void set_system_state(int state)
 {
-	if(fd_sys < 0)
+	if (fd_sys < 0)
 		return;
 
-	if(ioctl(fd_sys, CMD_SET_SYSTEM_STATE, &state) < 0)
-		perror("[smartshade] CMD_SET_SYSTEM_STATE failed\n");
+	if (ioctl(fd_sys, CMD_SET_SYSTEM_STATE, &state) < 0)
+		perror("[smartshade] CMD_SET_SYSTEM_STATE failed");
+}
+
+static void mqtt_mark_msg_received(void)
+{
+	pthread_mutex_lock(&mqtt_time_lock);
+	last_mqtt_msg_time = time(NULL);
+	timeout_alert_active = 0;
+	pthread_mutex_unlock(&mqtt_time_lock);
+}
+
+static void *mqtt_watchdog_thread(void *arg)
+{
+	(void)arg;
+
+	while (1) {
+		time_t now;
+		time_t last;
+		time_t elapsed;
+
+		sleep(1);
+
+		pthread_mutex_lock(&mqtt_time_lock);
+		last = last_mqtt_msg_time;
+		pthread_mutex_unlock(&mqtt_time_lock);
+
+		if (last == 0)
+			continue;
+
+		now = time(NULL);
+		elapsed = now - last;
+		if (elapsed < MQTT_PUBLISH_TIMEOUT_SEC)
+			continue;
+
+		if (timeout_alert_active)
+			continue;
+
+		timeout_alert_active = 1;
+		printf("[smartshade] MQTT publish timeout (%lds) -> STATE_ALERT\n",
+		       (long)elapsed);
+		set_system_state(STATE_ALERT);
+	}
+
+	return NULL;
 }
 
 static void handle_sensor_data(const char *payload)
@@ -112,23 +162,25 @@ static void handle_sensor_data(const char *payload)
 		return;
 	}
 
-	printf("[smartshade] light_a=%d light_b=%d intruder=%d\n",
-	    light_a, light_b, intruder);
+	mqtt_mark_msg_received();
 
-	if(intruder == 1) {
+	printf("[smartshade] light_a=%d light_b=%d intruder=%d\n",
+	       light_a, light_b, intruder);
+
+	if (intruder == 1) {
 		printf("[smartshade] intruder detected -> STATE_ALERT\n");
 		set_system_state(STATE_ALERT);
 		return;
 	}
 
-	if (intruder == 0 && prev_sys_state == STATE_ALERT){
-		printf("[smartshade] intruder undetected -> STATE 복구\n");
-		if(ioctl(fd_sys, CMD_RELEASE_ALERT, &state) < 0)
-			perror("[smartshade] CMD_RELEASSE_ALERT failed\n");
+	if (intruder == 0 && sys_state == STATE_ALERT) {
+		printf("[smartshade] intruder cleared -> release ALERT\n");
+		if (ioctl(fd_sys, CMD_RELEASE_ALERT) < 0)
+			perror("[smartshade] CMD_RELEASE_ALERT failed");
 		return;
 	}
 
-	if(sys_state != STATE_NORMAL)
+	if (sys_state != STATE_NORMAL)
 		return;
 
 	control_stepper_by_light(fd_a, light_a, "stepper_a");
@@ -205,20 +257,32 @@ static void on_connect(struct mosquitto *mosq, void *obj, int rc)
 	if (ret != MOSQ_ERR_SUCCESS)
 		fprintf(stderr, "[smartshade] subscribe failed: %s\n",
 			mosquitto_strerror(ret));
-	else
+	else {
 		printf("[smartshade] Subscribed: %s\n", MQTT_TOPIC);
+		mqtt_mark_msg_received();
+	}
 }
 
 static void on_message(struct mosquitto *mosq, void *obj,
 		       const struct mosquitto_message *msg)
 {
+	char buf[128];
+	size_t len;
+
 	(void)mosq;
 	(void)obj;
 
-	if (!msg->payload)
+	if (!msg->payload || msg->payloadlen <= 0)
 		return;
 
-	handle_sensor_data((const char *)msg->payload);
+	len = (size_t)msg->payloadlen;
+	if (len >= sizeof(buf))
+		len = sizeof(buf) - 1;
+
+	memcpy(buf, msg->payload, len);
+	buf[len] = '\0';
+
+	handle_sensor_data(buf);
 }
 
 static int mqtt_connect(struct mosquitto *mosq)
@@ -297,6 +361,17 @@ int main(void)
 			mosquitto_strerror(ret));
 		ret = 1;
 		goto out_mqtt;
+	}
+
+	{
+		pthread_t watchdog_tid;
+
+		if (pthread_create(&watchdog_tid, NULL, mqtt_watchdog_thread, NULL) != 0) {
+			perror("[smartshade] pthread_create watchdog failed");
+			ret = 1;
+			goto out_mqtt;
+		}
+		pthread_detach(watchdog_tid);
 	}
 
 	while (1)
