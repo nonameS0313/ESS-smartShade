@@ -75,11 +75,11 @@ static void control_stepper_by_light(int fd, int light, const char *name)
 	if (light > THRESHOLD_TOP) {
 		printf("[smartshade] %s: light=%d > TOP(%d) → CW %d°\n",
 		       name, light, THRESHOLD_TOP, ROTATE_DEGREE);
-		stepper_move(fd, ROTATE_DEGREE, 0);
+		stepper_move(fd, ROTATE_DEGREE, 1);
 	} else if (light < THRESHOLD_BOTTOM) {
 		printf("[smartshade] %s: light=%d < BOTTOM(%d) → CCW %d°\n",
 		       name, light, THRESHOLD_BOTTOM, ROTATE_DEGREE);
-		stepper_move(fd, ROTATE_DEGREE, 1);
+		stepper_move(fd, ROTATE_DEGREE, 0);
 	}
 }
 
