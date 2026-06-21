@@ -1,7 +1,7 @@
 obj-m:= ultra_switch.o
 
 KDIR:= /lib/modules/$(shell uname -r)/build
-ARM:= ARCH=arm CROSS_COMPILE=/usr/bin/arm-linux-gnueabi-
+ARM:= ARCH=arm
 PWD:= $(shell pwd)
 
 default:
