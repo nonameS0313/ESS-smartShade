@@ -193,15 +193,15 @@ static irqreturn_t ultra_echo_irq_handler(int irq, void *dev_id) {
 static void sw_timer_handler(struct timer_list *t) {
     // 디바운싱 타이머 만료 시점 (Bottom Half)
     if (gpio_get_value(GPIO_SW) == 0) { // 여전히 눌려있다면 유효한 입력
-        if (current_state == STATE_DISABLED) {
-            if (main_mode == STATE_MANUAL) main_mode = STATE_NORMAL;
-            else if (main_mode == STATE_NORMAL) main_mode = STATE_MANUAL;
-        } else {
-            // 일반 상태일 때는 기존처럼 즉시 전환
-            if (main_mode == STATE_MANUAL) change_system_state(STATE_NORMAL);
-            else if (main_mode == STATE_NORMAL) change_system_state(STATE_MANUAL);
+        if(current_state == STATE_NORMAL) {
+            change_system_state(STATE_MANUAL);
+        } else if (current_state == STATE_MANUAL) {
+            change_system_state(STATE_NORMAL);
+        } else if (current_state == STATE_DISABLED) {
+            main_mode = (main_mode == STATE_MANUAL) ? STATE_NORMAL : STATE_MANUAL;
         }
     }
+
     enable_irq(gpio_to_irq(GPIO_SW)); // 인터럽트 재개방
 }
 
