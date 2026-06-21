@@ -7,7 +7,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <time.h>
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <mosquitto.h>
@@ -30,16 +29,16 @@
 #define DEV_STEPPER_B         "/dev/stepper_b"
 #define DEV_SYS_STATE         "/dev/sys_state"
 #define ULTRA_WAIT_US         60000
-#define MQTT_PUBLISH_TIMEOUT_SEC  10
+#define MQTT_WATCHDOG_INTERVAL_SEC  10
+#define MQTT_MIN_PUBLISH_PER_WINDOW 3
 
 static int fd_a = -1;
 static int fd_b = -1;
 static int fd_sys = -1;
 static volatile int sys_state = STATE_NORMAL;
 static int prev_sys_state = STATE_NORMAL;
-static time_t last_mqtt_msg_time = 0;
-static int timeout_alert_active = 0;
-static pthread_mutex_t mqtt_time_lock = PTHREAD_MUTEX_INITIALIZER;
+static int mqtt_msg_count = 0;
+static pthread_mutex_t mqtt_count_lock = PTHREAD_MUTEX_INITIALIZER;
 
 //stepper_motor.c 사용
 static int stepper_move(int fd, int degree, int direction)
@@ -112,10 +111,16 @@ static void set_system_state(int state)
 
 static void mqtt_mark_msg_received(void)
 {
-	pthread_mutex_lock(&mqtt_time_lock);
-	last_mqtt_msg_time = time(NULL);
-	timeout_alert_active = 0;
-	pthread_mutex_unlock(&mqtt_time_lock);
+	pthread_mutex_lock(&mqtt_count_lock);
+	mqtt_msg_count++;
+	pthread_mutex_unlock(&mqtt_count_lock);
+}
+
+static void mqtt_reset_msg_count(void)
+{
+	pthread_mutex_lock(&mqtt_count_lock);
+	mqtt_msg_count = 0;
+	pthread_mutex_unlock(&mqtt_count_lock);
 }
 
 static void *mqtt_watchdog_thread(void *arg)
@@ -123,31 +128,21 @@ static void *mqtt_watchdog_thread(void *arg)
 	(void)arg;
 
 	while (1) {
-		time_t now;
-		time_t last;
-		time_t elapsed;
+		int count;
 
-		sleep(1);
+		sleep(MQTT_WATCHDOG_INTERVAL_SEC);
 
-		pthread_mutex_lock(&mqtt_time_lock);
-		last = last_mqtt_msg_time;
-		pthread_mutex_unlock(&mqtt_time_lock);
+		pthread_mutex_lock(&mqtt_count_lock);
+		count = mqtt_msg_count;
+		mqtt_msg_count = 0;
+		pthread_mutex_unlock(&mqtt_count_lock);
 
-		if (last == 0)
-			continue;
-
-		now = time(NULL);
-		elapsed = now - last;
-		if (elapsed < MQTT_PUBLISH_TIMEOUT_SEC)
-			continue;
-
-		if (timeout_alert_active)
-			continue;
-
-		timeout_alert_active = 1;
-		printf("[smartshade] MQTT publish timeout (%lds) -> STATE_ALERT\n",
-		       (long)elapsed);
-		set_system_state(STATE_ALERT);
+		if (count <= MQTT_MIN_PUBLISH_PER_WINDOW) {
+			printf("[smartshade] MQTT publish count low (%d in %ds, need >%d) -> STATE_ALERT\n",
+			       count, MQTT_WATCHDOG_INTERVAL_SEC,
+			       MQTT_MIN_PUBLISH_PER_WINDOW);
+			set_system_state(STATE_ALERT);
+		}
 	}
 
 	return NULL;
@@ -259,7 +254,7 @@ static void on_connect(struct mosquitto *mosq, void *obj, int rc)
 			mosquitto_strerror(ret));
 	else {
 		printf("[smartshade] Subscribed: %s\n", MQTT_TOPIC);
-		mqtt_mark_msg_received();
+		mqtt_reset_msg_count();
 	}
 }
 

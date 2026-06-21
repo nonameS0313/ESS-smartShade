@@ -54,7 +54,7 @@ make ARCH=arm
 Pi2 동작 요약:
 
 - `intruder == 1` → `/dev/sys_state`에 `STATE_ALERT` 설정 → `wait_and_process_sys_event()`에서 NORMAL→ALERT 전이 시 스테퍼 **0도(ZERO)**
-- **마지막 유효 MQTT 수신 후 10초** 동안 publish 없음 → `STATE_ALERT` (통신 두절)
+- **10초 구간당 유효 publish 3회 이하** → `STATE_ALERT` (통신 불량; Pi1 정상 시 약 10회/10초)
 - `sys_state == STATE_NORMAL`일 때만 조도 임계값으로 스테퍼 회전
 - `intruder == 1`인 메시지에서는 조도 기반 회전 **스킵**
 - `intruder == 0`이고 현재 `STATE_ALERT`이면 `CMD_RELEASE_ALERT`로 `main_mode` 복귀 (침입 해제·통신 재개)
@@ -234,15 +234,13 @@ mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
 
 같은 메시지에 `light_a`가 극단값이어도 `intruder==1`이면 **조도 모터 제어는 하지 않음**.
 
-**통신 두절 — 10초 미수신 ALERT**
+**통신 불량 — 10초 구간 publish 3회 이하 → ALERT**
 
 ```bash
-# 1회 publish 후 10초간 추가 publish 없음 → MQTT publish timeout -> STATE_ALERT
-mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
-  -m '{"light_a": 1800, "light_b": 1500, "intruder": 0}'
-# (10초 대기)
+# Pi1 collector 중지 또는 publish 간격이 길어지면
+# smartshade_mqtt watchdog: "MQTT publish count low (N in 10s, need >3) -> STATE_ALERT"
 
-# 복구: publish 재개 + intruder:0 → CMD_RELEASE_ALERT
+# 복구: 1초 주기 publish 재개 + intruder:0 → CMD_RELEASE_ALERT
 mosquitto_pub -h 10.10.10.13 -t smartshade/sensor/data \
   -m '{"light_a": 1800, "light_b": 1500, "intruder": 0}'
 ```
